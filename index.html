@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>ممر الليل</title>
+<style>
+:root{--bg:#1b2340;--ink:#f4f1fa;--amber:#ffd166}
+html,body{margin:0;height:100%;background:var(--bg);overflow:hidden;touch-action:none;font-family:system-ui,sans-serif;color:var(--ink)}
+canvas{display:block;width:100%;height:100%}
+#hud{position:fixed;top:0;left:0;right:0;padding:calc(env(safe-area-inset-top,0px) + 12px) 16px 0;display:flex;justify-content:space-between;font-size:20px;font-weight:700;pointer-events:none}
+#msg{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;padding:24px;background:rgba(27,35,64,.65)}
+#msg h1{margin:0;font-size:36px;color:var(--amber)}
+#msg p{margin:0;font-size:18px;line-height:1.6}
+#msg.hide{display:none}
+</style>
+</head>
+<body>
+<div id="hud"><span>النقاط: <b id="sc">0</b></span><span>الأفضل: <b id="bs">0</b></span></div>
+<div id="msg"><h1 id="t">ممر الليل</h1><p id="p">المس يمين أو يسار الشاشة لتفادي الصناديق الحمراء.<br>المس للبدء.</p></div>
+<script type="module">
+import * as THREE from './three.module.js';
+
+const LANES = [-2.4, 0, 2.4];
+const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'low-power' });
+renderer.setPixelRatio(1);
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1b2340);
+scene.fog = new THREE.Fog(0x1b2340, 20, 70);
+const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
+cam.position.set(0, 4.2, 7);
+cam.lookAt(0, 0, -8);
+scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+sun.position.set(3, 8, 5);
+scene.add(sun);
+
+const road = new THREE.Mesh(new THREE.PlaneGeometry(8, 200), new THREE.MeshLambertMaterial({ color: 0x2c3a6b }));
+road.rotation.x = -Math.PI / 2;
+road.position.z = -80;
+scene.add(road);
+
+const dashes = [];
+const dashGeo = new THREE.PlaneGeometry(0.15, 3);
+const dashMat = new THREE.MeshBasicMaterial({ color: 0x8a97c9 });
+for (const x of [-1.2, 1.2]) {
+  for (let i = 0; i < 10; i++) {
+    const d = new THREE.Mesh(dashGeo, dashMat);
+    d.rotation.x = -Math.PI / 2;
+    d.position.set(x, 0.02, -i * 12);
+    scene.add(d);
+    dashes.push(d);
+  }
+}
+
+const player = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.2, 1.8), new THREE.MeshLambertMaterial({ color: 0xffd166 }));
+player.position.y = 0.6;
+scene.add(player);
+
+const obsGeo = new THREE.BoxGeometry(1.6, 1.6, 1.6);
+const obsMat = new THREE.MeshLambertMaterial({ color: 0xef476f });
+const obstacles = [];
+for (let i = 0; i < 6; i++) {
+  const o = new THREE.Mesh(obsGeo, obsMat);
+  o.visible = false;
+  o.position.y = 0.8;
+  scene.add(o);
+  obstacles.push(o);
+}
+
+const $ = (id) => document.getElementById(id);
+let best = 0;
+try { best = +localStorage.getItem('nl-best') || 0; } catch (e) {}
+$('bs').textContent = best;
+
+let running = false, lane = 1, score = 0, speed = 14, spawnT = 1;
+
+function start() {
+  running = true; lane = 1; score = 0; spawnT = 1;
+  player.position.x = 0;
+  obstacles.forEach((o) => (o.visible = false));
+  $('msg').classList.add('hide');
+}
+
+function end() {
+  running = false;
+  const s = Math.floor(score);
+  if (s > best) {
+    best = s;
+    $('bs').textContent = best;
+    try { localStorage.setItem('nl-best', best); } catch (e) {}
+  }
+  $('t').textContent = 'اصطدمت';
+  $('p').innerHTML = 'نقاطك: ' + s + '<br>المس للعب مرة أخرى.';
+  $('msg').classList.remove('hide');
+}
+
+function move(dir) { lane = Math.max(0, Math.min(2, lane + dir)); }
+
+addEventListener('pointerdown', (e) => {
+  if (!running) { start(); return; }
+  move(e.clientX < innerWidth / 2 ? -1 : 1);
+});
+addEventListener('keydown', (e) => {
+  if (!running && (e.key === ' ' || e.key === 'Enter')) { start(); return; }
+  if (e.key === 'ArrowLeft' || e.key === 'a') move(-1);
+  if (e.key === 'ArrowRight' || e.key === 'd') move(1);
+});
+
+function resize() {
+  renderer.setSize(innerWidth, innerHeight, false);
+  cam.aspect = innerWidth / innerHeight;
+  cam.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+resize();
+
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  speed = running ? 14 + score * 0.02 : 8;
+  dashes.forEach((d) => { d.position.z += speed * dt; if (d.position.z > 10) d.position.z -= 120; });
+
+  if (running) {
+    score += speed * dt * 0.5;
+    $('sc').textContent = Math.floor(score);
+    spawnT -= dt;
+    if (spawnT <= 0) {
+      const o = obstacles.find((x) => !x.visible);
+      if (o) {
+        o.visible = true;
+        o.position.set(LANES[(Math.random() * 3) | 0], 0.8, -60);
+      }
+      spawnT = Math.max(0.45, 1.1 - score * 0.002) * (0.8 + Math.random() * 0.4);
+    }
+    for (const o of obstacles) {
+      if (!o.visible) continue;
+      o.position.z += speed * dt;
+      if (o.position.z > 8) o.visible = false;
+      else if (Math.abs(o.position.z) < 1.5 && Math.abs(o.position.x - player.position.x) < 1.4) end();
+    }
+  }
+
+  const tx = LANES[lane];
+  player.position.x += (tx - player.position.x) * Math.min(1, dt * 14);
+  player.rotation.z = (player.position.x - tx) * 0.2;
+  renderer.render(scene, cam);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
